@@ -1,0 +1,272 @@
+---
+title: "Very Basic Spatial Econometrics"
+author: "Joseph Snitzer"
+output:
+  tufte::tufte_html: default
+  tufte::tufte_handout:
+    citation_package: natbib
+    latex_engine: xelatex
+  tufte::tufte_book:
+    citation_package: natbib
+    latex_engine: xelatex
+bibliography: skeleton.bib
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+library(tufte)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(tidy = FALSE, cache.extra = packageVersion('tufte'))
+options(htmltools.dir.version = FALSE)
+library(sf)
+library(spdep)
+library(ggplot2)
+library(gtable)
+library(gridExtra)
+library(reshape2)
+shape <- read_sf("tl_2019_51_bg/tl_2019_51_bg.shp")
+shapesub <- shape[which(shape$COUNTYFP %in% c("540")),]
+shapesub$X <- 1:nrow(shapesub)
+shape3 <- poly2nb(shapesub, queen=T)
+shape <- read_sf("tl_2019_51_bg/tl_2019_51_bg.shp")
+```
+
+# Introduction
+
+> "Econometrics should be spatial, but not spatial econometrics as it's been developed."
+> --- [Amine Ouazad](https://twitter.com/amine_ouazad)
+
+This page is an attempt to explain some essential concepts from the field of spatial econometrics. This field is gaining more focus today, and has moved far beyond where it was in 1988 at the time of Luc Anselin's famous publication. However, because it is not a widely taught subject, it felt appropriate to attempt to present some of the basic concepts in an accessible (and visual!) way, since an often ignored part of spatial econometric education is the ability to exploit data visualization^[For instance, concepts like spatial autocorrelation have a spatial and visual basis that makes the concept more intuitive. There is no need to teach spatial econometrics the same way we teach time series econometrics, which is harder to *see* visually]. The key texts we will consult are *A Primer in Spatial Econometrics*, as well as the two other intro books need to include here.
+
+## Motivation
+
+This is mainly a way to explore how to use RMarkdown to make simple explainers for concepts, hopefully aiding in my own understanding of the concepts.
+
+```{r out.width='50%', echo=FALSE}
+#library(leaflet)
+#leaflet() %>% addTiles() %>%
+#  setView(-93.65, 42.0285, zoom = 17) %>%
+#  addPopups(
+#    -93.65, 42.0285,
+#    'Here is the <b>Department of Statistics</b>, ISU'
+#  )
+```
+
+# Spatial Weights Matrix
+
+We first will consider the fundamental conceptual tool used in spatial econometrics: the spatial weights matrix. Because we are motivated to use spatial econometric tools because we believe there is a degree of correlation to our data, we will need a way to quantify this degree of relation between spatial units. Whereas temporal lags are an obvious way by which to account for temporal autocorrelation in time series models, there is not as clearcut a way to measure spatial relations.<br>
+In the formalized model, we'll see that there are certain ways to construct a weights matrix that will be more beneficial than others^[For example, we won't consider a spatial unit to be a neighbor to itself, for reasons we'll explore later]. The *context* of the individual problem will also be informative of which approach makes sense. Below we have visualized only some of the options:
+
+```{r out.width='100%', out.height='50%', echo=FALSE, warning=FALSE, message=FALSE}
+pts <- st_centroid(shapesub)
+pts$name <- 1:37
+coords <- data.frame(cbind("name"=pts$name, st_coordinates(pts)))
+coords2 <- data.frame(cbind("origin"=rep(coords$name,37),
+      "X"=rep(coords$X,37),
+      "Y"=rep(coords$Y,37),
+      "dest"=rep(coords$name,each=37),
+      "Xend"=rep(coords$X,each=37),
+      "Yend"=rep(coords$Y,each=37)))
+coords2$dist <- sqrt((coords2$X-coords2$Xend)^2+(coords2$Y-coords2$Yend)^2)
+coords3 <- coords2[which(coords2$dist<0.015),]
+
+plot <- ggplot() + geom_sf(shapesub, mapping=aes(fill=GEOID),alpha=0.5) + 
+  geom_sf(pts, mapping=aes()) +  
+          theme(axis.title.x=element_blank(),axis.text.x=element_blank(),
+                axis.ticks.x=element_blank(),axis.title.y=element_blank(),
+                axis.text.y=element_blank(),axis.ticks.y=element_blank(),
+                panel.border = element_blank(),
+                legend.title = element_blank(),
+                panel.background = element_rect(fill = "#FFFFF8"), # bg of the panel
+                plot.background = element_rect(fill = "#FFFFF8", color = NA), # bg of the plot
+                panel.grid.major = element_blank(), # get rid of major grid
+                panel.grid.minor = element_blank(), # get rid of minor grid
+                legend.background = element_rect(fill = "#FFFFF8"), # get rid of legend bg
+                legend.box.background = element_rect(fill = "#FFFFF8", color=NA),
+                legend.position = "none")
+
+ggplot(height=500,width=900) +
+  theme(axis.title.x=element_blank(),axis.text.x=element_blank(),
+                axis.ticks.x=element_blank(),axis.title.y=element_blank(),
+                axis.text.y=element_blank(),axis.ticks.y=element_blank(),
+                panel.border = element_blank(),
+                legend.title = element_blank(),
+                panel.background = element_rect(fill = "#FFFFF8"), # bg of the panel
+                plot.background = element_rect(fill = "#FFFFF8", color = NA), # bg of the plot
+                panel.grid.major = element_blank(), # get rid of major grid
+                panel.grid.minor = element_blank(), # get rid of minor grid
+                legend.background = element_rect(fill = "#FFFFF8"), # get rid of legend bg
+                legend.box.background = element_rect(fill = "#FFFFF8", color=NA),
+                legend.position = "none")
+
+grid.arrange(plot,
+             plot + 
+               geom_segment(coords2, 
+               mapping=aes(x=X, y=Y, xend=Xend, yend=Yend), size=0.12, alpha=0.5),
+             plot + 
+               geom_segment(coords3, 
+               mapping=aes(x=X, y=Y, xend=Xend, yend=Yend), size=0.12, alpha=0.85),
+             plot + 
+               geom_segment(coords3, 
+               mapping=aes(x=X, y=Y, xend=Xend, yend=Yend, color=dist), alpha=0.85,
+               size=1) +
+              scale_color_gradient2(low="#22223b", mid = "#4a4e69", high="#9a8c98", 
+                        midpoint = (min(coords3$dist) + max(coords3$dist))/2,
+                        limits=c(min(coords3$dist), max(coords3$dist))),
+             nrow=2, newpage = F)
+
+```
+
+We'll want to have lower values associated with larger distances. We can accomplish this by calculating the inverse distance instead (where we simply let our zero values remain as zero). Below we'll see the distance matrix, as well as the inverse matrix.
+
+```{r out.width='100%', out.height='50%', echo=FALSE, warning=FALSE, message=FALSE}
+
+### Second plots
+coords4 <- coords2[which(coords2$dist<0.0055),]
+coords4a <- coords4[which(coords4$dist>0),]
+df <- coords4[,c("origin","dest","dist")]
+df$dist <- round(1000*df$dist,1)
+df <- dcast(df, origin~dest)
+df <- df[,2:ncol(df)]
+df2 <- df
+df2[is.na(df2 <- df)] <- 0
+df2 <- df2[rowSums(df2)!=0,rowSums(df2)!=0]
+
+plot2 <- ggplot() + geom_sf(shapesub, mapping=aes(),alpha=0.5,fill="#f9dcc4") + 
+  geom_sf(pts[which(pts$name %in% coords4[which(coords4$dist!=0),"origin"]),], mapping=aes()) +  
+          theme(axis.title.x=element_blank(),axis.text.x=element_blank(),
+                axis.ticks.x=element_blank(),axis.title.y=element_blank(),
+                axis.text.y=element_blank(),axis.ticks.y=element_blank(),
+                panel.border = element_blank(),
+                legend.title = element_blank(),
+                panel.background = element_rect(fill = "#FFFFF8"), # bg of the panel
+                plot.background = element_rect(fill = "#FFFFF8", color = NA), # bg of the plot
+                panel.grid.major = element_blank(), # get rid of major grid
+                panel.grid.minor = element_blank(), # get rid of minor grid
+                legend.background = element_rect(fill = "#FFFFF8"), # get rid of legend bg
+                legend.box.background = element_rect(fill = "#FFFFF8", color=NA),
+                legend.text = element_blank()) +
+                geom_segment(coords4, 
+               mapping=aes(x=X, y=Y, xend=Xend, yend=Yend, color=dist), size=1, alpha=1) +
+  scale_color_gradient2(low="#a8dadc", mid = "#457b9d", high="#1d3557", 
+                        midpoint = (min(coords4a$dist) + max(coords4a$dist))/2,
+                        limits=c(min(coords4a$dist), max(coords4a$dist)))
+
+plot3 <- ggplot() + geom_sf(shapesub, mapping=aes(),alpha=0.5,fill="#dee2ff") + 
+  geom_sf(pts[which(pts$name %in% coords4[which(coords4$dist!=0),"origin"]),], mapping=aes()) +  
+          theme(axis.title.x=element_blank(),axis.text.x=element_blank(),
+                axis.ticks.x=element_blank(),axis.title.y=element_blank(),
+                axis.text.y=element_blank(),axis.ticks.y=element_blank(),
+                panel.border = element_blank(),
+                legend.title = element_blank(),
+                panel.background = element_rect(fill = "#FFFFF8"), # bg of the panel
+                plot.background = element_rect(fill = "#FFFFF8", color = NA), # bg of the plot
+                panel.grid.major = element_blank(), # get rid of major grid
+                panel.grid.minor = element_blank(), # get rid of minor grid
+                legend.background = element_rect(fill = "#FFFFF8"), # get rid of legend bg
+                legend.box.background = element_rect(fill = "#FFFFF8", color=NA),
+                legend.text = element_blank()) +
+                geom_segment(coords4, 
+               mapping=aes(x=X, y=Y, xend=Xend, yend=Yend, color=dist), size=1, alpha=1) +
+  scale_color_gradient2(low="#f08080", mid = "#fbc4ab", high="#fbc4ab", 
+                        midpoint = (min(coords4a$dist) + max(coords4a$dist))/2,
+                        limits=c(min(coords4a$dist), max(coords4a$dist)))
+
+df3 <- 1/df2
+df4 <- df3
+df4[(df4 <- df3)==Inf] <- 0
+df4 <- signif(df4,2)
+
+ggplot() +
+  theme(axis.title.x=element_blank(),axis.text.x=element_blank(),
+                axis.ticks.x=element_blank(),axis.title.y=element_blank(),
+                axis.text.y=element_blank(),axis.ticks.y=element_blank(),
+                panel.border = element_blank(),
+                legend.title = element_blank(),
+                panel.background = element_rect(fill = "#FFFFF8"), # bg of the panel
+                plot.background = element_rect(fill = "#FFFFF8", color = NA), # bg of the plot
+                panel.grid.major = element_blank(), # get rid of major grid
+                panel.grid.minor = element_blank(), # get rid of minor grid
+                legend.background = element_rect(fill = "#FFFFF8"), # get rid of legend bg
+                legend.box.background = element_rect(fill = "#FFFFF8", color=NA),
+                legend.position = "none")
+
+grid.arrange(plot2, tableGrob(df2, theme=ttheme_minimal(base_size=6)), 
+             plot3, tableGrob(df4, theme=ttheme_minimal(base_size=6)), nrow=2, ncol=2, newpage = F)
+
+```
+
+# Spillover effects
+
+Rather than explore spillover effects later on, it might be motivating to be exposed to this concept first before seeing how we can directly quantify some of these concepts.
+
+```{r out.width='100%', out.height='50%', echo=FALSE}
+func <- function(cell,iter)
+{
+  x = cell
+  y = cell
+  for(i in 1:iter)
+  {
+    x <- y
+    y <- unlist(shape3[x])
+    y <- y[which(y!=cell)]
+  }
+  y <- unique(y)
+  x <- cell
+  ggplot() + geom_sf(shapesub, mapping=aes()) + 
+  geom_sf(shapesub[which(shapesub$X %in% y),], 
+          mapping=aes(fill=(0.95^iter)/(length(y)))) +
+  geom_sf(shapesub[which(shapesub$X %in% x),], mapping=aes(), fill="black") +  
+          theme(axis.title.x=element_blank(),axis.text.x=element_blank(),
+                axis.ticks.x=element_blank(),axis.title.y=element_blank(),
+                axis.text.y=element_blank(),axis.ticks.y=element_blank(),
+                panel.border = element_blank(),
+                legend.title = element_blank(),
+                panel.background = element_rect(fill = "#FFFFF8"), # bg of the panel
+                plot.background = element_rect(fill = "#FFFFF8", color = NA), # bg of the plot
+                panel.grid.major = element_blank(), # get rid of major grid
+                panel.grid.minor = element_blank(), # get rid of minor grid
+                legend.background = element_rect(fill = "#FFFFF8"), # get rid of legend bg
+                legend.box.background = element_rect(fill = "#FFFFF8", color=NA),
+                legend.position = "none") +
+  scale_fill_gradient2(limits=c(0,(0.95)/(length(unlist(shape3[x])))), 
+                       low="white", mid="red", high="brown",
+                       midpoint=((0.95)/(length(unlist(shape3[x]))))/2) +
+  guides(fill = guide_colourbar(label = FALSE))
+}
+
+ggplot() +
+  theme(axis.title.x=element_blank(),axis.text.x=element_blank(),
+                axis.ticks.x=element_blank(),axis.title.y=element_blank(),
+                axis.text.y=element_blank(),axis.ticks.y=element_blank(),
+                panel.border = element_blank(),
+                legend.title = element_blank(),
+                panel.background = element_rect(fill = "#FFFFF8"), # bg of the panel
+                plot.background = element_rect(fill = "#FFFFF8", color = NA), # bg of the plot
+                panel.grid.major = element_blank(), # get rid of major grid
+                panel.grid.minor = element_blank(), # get rid of minor grid
+                legend.background = element_rect(fill = "#FFFFF8"), # get rid of legend bg
+                legend.box.background = element_rect(fill = "#FFFFF8", color=NA),
+                legend.position = "none")
+grid.arrange(func(10,1),func(10,2),func(10,3),
+             func(10,4),func(10,5),func(10,6),nrow=2,newpage = F)
+
+```
+
+## Own spillover
+
+## Emanating effects
+
+# Spatial econometric model
+
+## Spatial Durbin and its varients
+
+## Estimation methods
+
+## Revisiting spillover effects
+
+```{r fig-margin, fig.margin = TRUE, fig.cap = "MPG vs horsepower, colored by transmission.", fig.width=3.5, fig.height=3.5, cache=TRUE, message=FALSE, echo=F}
+# Insert a side-plot here
+```
+
+

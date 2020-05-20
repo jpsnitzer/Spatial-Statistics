@@ -1,0 +1,16 @@
+base
+methods
+datasets
+utils
+grDevices
+graphics
+stats
+tufte
+sf
+sp
+spData
+spdep
+ggplot2
+gtable
+gridExtra
+reshape2
